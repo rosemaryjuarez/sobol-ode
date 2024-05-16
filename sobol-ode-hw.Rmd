@@ -1,0 +1,155 @@
+---
+title: "sobol with Ode hw assignment"
+Author: "Rosemary Juarez and Vanessa Salgado"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(deSolve)
+library(sensitivity)
+library(kableExtra)
+```
+
+```{r}
+
+#===================================================================
+#                           SET UP
+#===================================================================
+
+
+# Forest growth model
+source("dforestgrowth.R")
+
+#-------------------------------------
+# Set up Sobol sensitivity analysis
+# ------------------------------------
+
+# Define parameter ranges and distributions
+np <- 2000
+closure_threshold <- rnorm(mean = 50, sd = 5, n = np) #parameter
+K <- rnorm(mean = 250, sd = 25, n = np) #parameter
+r <- rnorm(mean = 0.01, sd = 0.001, n = np) #parameter
+g <- rnorm(mean = 2, sd = 0.2, n = np) #parameter
+
+X1 <- cbind.data.frame(closure_threshold = closure_threshold, K = K, r = r, g = g)
+X2 <- cbind.data.frame(closure_threshold = closure_threshold, K = K, r = r, g = g)
+
+# Fix any negative values
+X1 <- X1 %>% map_df(pmax, 0.0)
+X2 <- X2 %>% map_df(pmax, 0.0)
+
+# Create Sobol object
+sens_P <- sobolSalt(model = NULL, X1, X2, nboot = 300)
+colnames(sens_P$X) <- c("closure_threshold", "K", "r", "g")
+
+# Define initial conditions and simulation times
+Cinitial <- 10
+simtimes <- seq(from = 1, to = 300)
+
+#===================================================================
+#                           END
+#===================================================================
+
+```
+
+
+```{r}
+
+
+#===================================================================
+#                           CREATING FUNCTION
+#===================================================================
+
+# metric function for maximum forest size
+compute_maxsize <- function(result) {
+  maxsize <- max(result$C)
+  return(list(maxsize = maxsize))
+}
+
+# Wrapper function:
+# run ODE solver and compute maximum forest size
+p_wrapper_maxsize <- function(closure_threshold, K, r, g, Cinitial, simtimes, odefunc, metricfunc) {
+  parms <- list(closure_threshold = closure_threshold, K = K, r = r, g = g)
+  result <- ode(y = Cinitial, times = simtimes, func = odefunc, parms = parms)
+  colnames(result) <- c("time", "C")
+  metrics <- metricfunc(as.data.frame(result))
+  return(metrics)
+}
+
+# Run wrapper for all parameter sets
+allresults_maxsize <- as.data.frame(sens_P$X) %>%
+  pmap(p_wrapper_maxsize, Cinitial = Cinitial, simtimes = simtimes, odefunc = dforestgrowth, metricfunc = compute_maxsize)
+
+
+#max results!
+allres_maxsize <- allresults_maxsize %>% map_dfr(`[`, "maxsize")
+
+allres_maxsize$ma
+
+#-------------------------------
+#             plot
+#-------------------------------
+
+
+# boxplot for maximum forest size
+ggplot(allres_maxsize, aes(x = "Maximum Forest Size", y = maxsize)) +
+  geom_boxplot()
+
+# Compute Sobol indices for maximum forest size
+sens_P_maxsize <- sensitivity::tell(sens_P, allres_maxsize$maxsize)
+
+# Print Sobol indices for maximum forest size
+rownames(sens_P_maxsize$S) <- c("closure_threshold", "K", "r", "g")
+
+# first-order indices (main effect without co-variance)
+sens_P_maxsize$S
+
+
+# total sensitivity index
+sens_P_maxsize$T
+
+```
+
+
+
+extra credit
+```{r}
+#function for forest size after 100 years
+compute_size_100 <- function(result) {
+  size_100 <- result$C[result$time == 100]
+  return(list(size_100 = size_100))
+}
+
+# Wrapper function to run ODE solver and forest size after 100 years
+p_wrapper_size_100 <- function(closure_threshold, K, r, g, Cinitial, simtimes, odefunc, metricfunc) {
+  parms <- list(closure_threshold = closure_threshold, K = K, r = r, g = g)
+  result <- ode(y = Cinitial, times = simtimes, func = odefunc, parms = parms)
+  colnames(result) <- c("time", "C")
+  metrics <- metricfunc(as.data.frame(result))
+  return(metrics)
+}
+
+# Run wrapper for all parameters
+allresults_size_100 <- as.data.frame(sens_P$X) %>%
+  pmap(p_wrapper_size_100, Cinitial = Cinitial, simtimes = simtimes, odefunc = dforestgrowth, metricfunc = compute_size_100)
+
+allres_size_100 <- allresults_size_100 %>% map_dfr(`[`, "size_100")
+
+# Create boxplot for forest size after 100 years
+ggplot(allres_size_100, aes(x = "Forest Size at 100 Years", y = size_100)) + geom_boxplot()
+
+# Compute Sobol indices for forest size after 100 years
+sens_P_size_100 <- sensitivity::tell(sens_P, allres_size_100$size_100)
+
+# Print Sobol indices for forest size after 100 years
+rownames(sens_P_size_100$S) <- c("closure_threshold", "K", "r", "g")
+#first order
+sens_P_size_100$S
+
+#second order
+sens_P_size_100$T
+```
+
